@@ -3,31 +3,20 @@ from torch.optim.lr_scheduler import StepLR
 from tqdm import tqdm
 import torch
 from torch import nn, optim
-import argparse
 
 from ResTCN import ResTCN
-from utils import get_dataloader  # 回傳 {'train': ...}
+from utils import get_dataloader  # 這版只會回傳 {'train': ...}
 
+import argparse
+
+argparse.ArgumentParser(description='Train ResTCN model on preprocessed data.')
 # ===== 讀取參數 =====
-parser = argparse.ArgumentParser(description='Train ResTCN model on preprocessed data (incremental fine-tuning).')
+parser = argparse.ArgumentParser(description='Train ResTCN model on preprocessed data.')
 parser.add_argument('--ID', type=int, required=True, help='the ID of the training run')
-parser.add_argument('--data-root', type=str, default=os.path.join(os.getcwd(), 'images_train'),
-                    help='root directory containing per-window folders (default: ./images_train)')
-parser.add_argument('--csv-file', type=str, default='train.csv', help='CSV file describing path,label per row')
-parser.add_argument('--pretrained', type=str, default=None, help='path to a previous best checkpoint to warm-start from')
+
 args = parser.parse_args()
-
 run_id = args.ID
-data_root = args.data_root
-csv_file = args.csv_file
-pretrained_path = args.pretrained
-
 print(f"Running training with ID: {run_id}", flush=True)
-print(f"Data root: {data_root}", flush=True)
-print(f"CSV file: {csv_file}", flush=True)
-if pretrained_path:
-    print(f"Pretrained checkpoint: {pretrained_path}", flush=True)
-
 # ===== 超參數與環境 =====
 torch.manual_seed(0)
 num_epochs = 100
@@ -38,33 +27,19 @@ device = torch.device("cuda" if use_cuda and torch.cuda.is_available() else "cpu
 print("Device being used:", device, flush=True)
 
 # ===== 只建立 train dataloader（不讀 test）=====
-dataloader = get_dataloader(batch_size, csv_file, data_root)
+dataloader = get_dataloader(batch_size, 'train.csv', os.path.join(os.getcwd(), 'images_train'))
 dataset_sizes = {'train': len(dataloader['train'].dataset)}
 print(dataset_sizes, flush=True)
 
 # ===== 建立模型 / 優化器 / scheduler / loss =====
 model = ResTCN().to(device)
-
-# ---- 可選：載入預訓練權重（僅載入 model_state_dict，不載 optimizer）----
-if pretrained_path and os.path.exists(pretrained_path):
-    ckpt = torch.load(pretrained_path, map_location=device)
-    state = ckpt.get('model_state_dict', ckpt)
-    missing, unexpected = model.load_state_dict(state, strict=False)
-    print(f"Loaded pretrained weights. Missing keys: {len(missing)}, Unexpected keys: {len(unexpected)}", flush=True)
-else:
-    if pretrained_path:
-        print(f"⚠️ 指定的預訓練權重不存在：{pretrained_path}，將以隨機初始化進行。", flush=True)
-
 optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 scheduler = StepLR(optimizer, step_size=50, gamma=0.1)
 criterion = nn.CrossEntropyLoss().to(device)
 
-# ===== 輸出路徑（確保存在）=====
-os.makedirs('models', exist_ok=True)
-best_ckpt_path = f'models/best_model_{run_id}.pth'
-
 # ===== 最佳模型追蹤 =====
 best_loss = float('inf')
+best_ckpt_path = f'models/best_model_{run_id}.pth'  # 可自行更改路徑
 
 # ===== 訓練迴圈（無測試）=====
 for epoch in range(num_epochs):
@@ -73,10 +48,10 @@ for epoch in range(num_epochs):
 
     for inputs, labels in tqdm(dataloader['train'], disable=False):
         inputs = inputs.to(device)
-        labels = labels.long().view(-1).to(device)
+        labels = labels.long().view(-1).to(device)  # 確保 shape 為 [B]
 
-        optimizer.zero_grad(set_to_none=True)
-        outputs = model(inputs)
+        optimizer.zero_grad()
+        outputs = model(inputs)                    # 不 squeeze，避免 batch=1 出事
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
@@ -99,7 +74,7 @@ for epoch in range(num_epochs):
         }, best_ckpt_path)
         print(f"✅ 新最佳 loss: {best_loss:.6f}，已儲存至 {best_ckpt_path}", flush=True)
 
-    # LR 排程
+    # LR 排程（每個 epoch 結束後 step）
     scheduler.step()
 
 print(f"訓練完成。最佳訓練 loss = {best_loss:.6f}，已儲存至 {best_ckpt_path}")

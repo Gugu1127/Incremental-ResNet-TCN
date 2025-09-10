@@ -16,7 +16,5 @@ def generate_dataloader(batch_size, csv, root):
                       num_workers=4)
 
 
-def get_dataloader(batch_size, csv_train, root_train, csv_test, root_test):
-    return {
-        'train': generate_dataloader(batch_size, csv_train, root_train),
-        'test': generate_dataloader(batch_size, csv_test, root_test)}
+def get_dataloader(batch_size, csv_train, root_train):
+    return {'train': generate_dataloader(batch_size, csv_train, root_train)}
